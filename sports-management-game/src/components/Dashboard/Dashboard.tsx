@@ -1,13 +1,15 @@
 import React from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { TEAM_CONTEXTS, STRATEGIES } from '../../game/teamContext';
+import { SALARY_CAP, LUXURY_TAX_THRESHOLD, SALARY_FLOOR, calculateLuxuryTax } from '../../game/economics';
 import PlayerCard from '../common/PlayerCard';
 
 const Dashboard: React.FC = () => {
   const {
     getUserTeam, fanApproval, ownerConfidence,
     strategy, seasonResults, newsLog,
-    getStandings, salaryCapSpace, salaryCap, gmLevel,
+    getStandings, salaryCapSpace, gmLevel,
+    currentSeason, maxSeasons, financials, volatility, riskDecisions,
   } = useGameStore();
 
   const team = getUserTeam();
@@ -26,9 +28,121 @@ const Dashboard: React.FC = () => {
     : 0;
 
   const recentNews = newsLog.slice(-5).reverse();
+  const seasonsRemaining = maxSeasons - currentSeason + 1;
+
+  // Calculate luxury tax preview
+  const projectedTax = calculateLuxuryTax(team.totalSalary, financials.consecutiveTaxYears);
+
+  // Count high-risk decisions this season
+  const highRiskThisSeason = riskDecisions.filter(d =>
+    d.season === currentSeason && d.riskLevel === 'high'
+  ).length;
 
   return (
     <div className="max-w-7xl mx-auto p-4">
+      {/* Season Progress Banner */}
+      <div className="bg-gradient-to-r from-basketball-orange/20 to-orange-900/20 border border-basketball-orange/30 rounded-xl p-4 mb-6">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div>
+            <span className="text-basketball-orange text-sm font-medium">Track 301 - Module 2 - Lesson 2</span>
+            <h2 className="text-white font-bold text-lg">Season {currentSeason} of {maxSeasons}</h2>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white">{seasonsRemaining}</div>
+              <div className="text-xs text-gray-400">Seasons Left</div>
+            </div>
+            <div className="text-center">
+              <div className={`text-lg font-bold ${volatility.volatilityRating === 'stable' ? 'text-blue-400' : volatility.volatilityRating === 'moderate' ? 'text-green-400' : volatility.volatilityRating === 'volatile' ? 'text-orange-400' : 'text-red-400'}`}>
+                {volatility.volatilityRating.charAt(0).toUpperCase() + volatility.volatilityRating.slice(1)}
+              </div>
+              <div className="text-xs text-gray-400">Volatility</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-white">{highRiskThisSeason}</div>
+              <div className="text-xs text-gray-400">High-Risk Moves</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* LESSON GOAL TRACKER */}
+      <div className="bg-arena-mid rounded-xl p-5 mb-6 border border-gray-700">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-heading text-lg font-bold text-white">Your Goal: Match Risk to Context</h2>
+          <span className="text-xs text-gray-500">Scored at end of 3 seasons</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Risk-Context Alignment */}
+          <div className="bg-arena-dark rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-3 h-3 rounded-full ${
+                context.ownershipRiskTolerance >= 7
+                  ? (volatility.volatilityRating === 'volatile' || volatility.volatilityRating === 'extreme' ? 'bg-green-500' : 'bg-yellow-500')
+                  : context.ownershipRiskTolerance >= 4
+                  ? (volatility.volatilityRating === 'moderate' ? 'bg-green-500' : 'bg-yellow-500')
+                  : (volatility.volatilityRating === 'stable' ? 'bg-green-500' : 'bg-red-500')
+              }`} />
+              <span className="text-sm font-medium text-white">Risk-Context Fit</span>
+              <span className="text-xs text-basketball-orange ml-auto">40% of score</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              {context.ownershipRiskTolerance >= 7
+                ? 'Your team SHOULD take big risks. Are you being aggressive enough?'
+                : context.ownershipRiskTolerance >= 4
+                ? 'Moderate risk is appropriate. Balance aggression with stability.'
+                : 'Your team should AVOID high risk. Playing it safe is the smart move.'}
+            </p>
+          </div>
+
+          {/* Financial Health */}
+          <div className="bg-arena-dark rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-3 h-3 rounded-full ${
+                team.totalSalary <= LUXURY_TAX_THRESHOLD && team.totalSalary >= SALARY_FLOOR
+                  ? 'bg-green-500'
+                  : team.totalSalary > LUXURY_TAX_THRESHOLD
+                  ? 'bg-yellow-500'
+                  : 'bg-red-500'
+              }`} />
+              <span className="text-sm font-medium text-white">Financial Health</span>
+              <span className="text-xs text-basketball-orange ml-auto">30% of score</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              {team.totalSalary > LUXURY_TAX_THRESHOLD
+                ? 'Over luxury tax threshold. This is expensive but can be worth it for contenders.'
+                : team.totalSalary < SALARY_FLOOR
+                ? 'Below salary floor. You need to spend more on players.'
+                : 'Healthy finances. Good cap management.'}
+            </p>
+          </div>
+
+          {/* On-Court Results */}
+          <div className="bg-arena-dark rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-3 h-3 rounded-full ${
+                team.wins > team.losses ? 'bg-green-500' : team.wins === team.losses ? 'bg-yellow-500' : 'bg-red-500'
+              }`} />
+              <span className="text-sm font-medium text-white">Performance</span>
+              <span className="text-xs text-basketball-orange ml-auto">30% of score</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              {seasonResults.length > 0
+                ? `${seasonResults.filter(s => s.playoffResult !== 'missed').length} playoff appearances, ${seasonResults.filter(s => s.playoffResult === 'champion').length} championships`
+                : 'Season in progress. Results matter, but context matters more.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 p-3 bg-gradient-to-r from-basketball-orange/10 to-transparent rounded-lg border-l-4 border-basketball-orange">
+          <p className="text-sm text-gray-300">
+            <span className="font-bold text-white">KEY INSIGHT:</span> The lesson isn't about always winning—it's about making the RIGHT decisions for YOUR situation.
+            A risky trade that fails might still be the correct choice for a team that needs volatility to escape mediocrity.
+          </p>
+        </div>
+      </div>
+
       {/* Team Header */}
       <div className="bg-arena-mid rounded-xl p-6 mb-6 border border-gray-700">
         <div className="flex items-center justify-between">
@@ -68,7 +182,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Status & News */}
+        {/* Left Column - Status & Finance */}
         <div className="space-y-6">
           {/* GM Status */}
           <div className="bg-arena-mid rounded-xl p-5 border border-gray-700">
@@ -106,16 +220,119 @@ const Dashboard: React.FC = () => {
                 <span className="text-gray-400">GM Level</span>
                 <span className="font-stats text-basketball-orange font-bold">Lv. {gmLevel}</span>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Salary Cap</span>
-                <span className="font-stats text-white">${(salaryCap - salaryCapSpace).toFixed(1)}M / ${salaryCap}M</span>
+            </div>
+          </div>
+
+          {/* Financial Overview */}
+          <div className="bg-arena-mid rounded-xl p-5 border border-gray-700">
+            <h2 className="font-heading text-lg font-bold text-white mb-4">Financial Status</h2>
+            <div className="space-y-4">
+              {/* Payroll Bar */}
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-gray-400">Payroll</span>
+                  <span className="font-stats text-white">${team.totalSalary.toFixed(1)}M</span>
+                </div>
+                <div className="relative w-full bg-gray-700 rounded-full h-4">
+                  {/* Floor marker */}
+                  <div
+                    className="absolute h-full border-l-2 border-yellow-500"
+                    style={{ left: `${(SALARY_FLOOR / 200) * 100}%` }}
+                    title="Salary Floor"
+                  />
+                  {/* Cap marker */}
+                  <div
+                    className="absolute h-full border-l-2 border-green-500"
+                    style={{ left: `${(SALARY_CAP / 200) * 100}%` }}
+                    title="Salary Cap"
+                  />
+                  {/* Tax marker */}
+                  <div
+                    className="absolute h-full border-l-2 border-red-500"
+                    style={{ left: `${(LUXURY_TAX_THRESHOLD / 200) * 100}%` }}
+                    title="Luxury Tax"
+                  />
+                  {/* Current payroll */}
+                  <div
+                    className={`h-4 rounded-full transition-all ${
+                      team.totalSalary > LUXURY_TAX_THRESHOLD ? 'bg-red-500' :
+                      team.totalSalary > SALARY_CAP ? 'bg-yellow-500' : 'bg-green-500'
+                    }`}
+                    style={{ width: `${Math.min((team.totalSalary / 200) * 100, 100)}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>Floor ${SALARY_FLOOR}M</span>
+                  <span>Cap ${SALARY_CAP}M</span>
+                  <span>Tax ${LUXURY_TAX_THRESHOLD}M</span>
+                </div>
               </div>
+
+              {/* Cap Space */}
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Cap Space</span>
                 <span className={`font-stats ${salaryCapSpace > 20 ? 'text-green-400' : salaryCapSpace > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
                   ${salaryCapSpace.toFixed(1)}M
                 </span>
               </div>
+
+              {/* Luxury Tax Warning */}
+              {team.totalSalary > LUXURY_TAX_THRESHOLD && (
+                <div className="bg-red-900/30 border border-red-600 rounded-lg p-3">
+                  <div className="text-red-400 font-bold text-sm">Luxury Tax Active</div>
+                  <div className="text-red-300 text-xs">
+                    Projected tax: ${projectedTax.toFixed(1)}M
+                    {financials.consecutiveTaxYears >= 2 && ' (Repeater penalty applies!)'}
+                  </div>
+                </div>
+              )}
+
+              {/* Below Floor Warning */}
+              {team.totalSalary < SALARY_FLOOR && (
+                <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-3">
+                  <div className="text-yellow-400 font-bold text-sm">Below Salary Floor</div>
+                  <div className="text-yellow-300 text-xs">
+                    Must spend ${(SALARY_FLOOR - team.totalSalary).toFixed(1)}M more
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Risk Context */}
+          <div className="bg-arena-mid rounded-xl p-5 border border-gray-700">
+            <h2 className="font-heading text-lg font-bold text-white mb-4">Team Context & Risk</h2>
+            <div className="space-y-3">
+              <div className="bg-arena-dark rounded-lg p-3">
+                <div className="text-sm text-gray-400 mb-1">Context Type</div>
+                <div className="text-white font-medium">{context.label}</div>
+                <p className="text-xs text-gray-500 mt-1">{context.description}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="bg-arena-dark rounded p-2">
+                  <span className="text-gray-400">Fan Patience</span>
+                  <div className="flex mt-1">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className={`w-2 h-2 rounded-full mr-1 ${i < Math.ceil(context.fanPatience / 2) ? 'bg-green-400' : 'bg-gray-600'}`} />
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-arena-dark rounded p-2">
+                  <span className="text-gray-400">Risk Tolerance</span>
+                  <div className="flex mt-1">
+                    {[...Array(5)].map((_, i) => (
+                      <div key={i} className={`w-2 h-2 rounded-full mr-1 ${i < Math.ceil(context.ownershipRiskTolerance / 2) ? 'bg-orange-400' : 'bg-gray-600'}`} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 italic">
+                {context.fanPatience >= 7
+                  ? 'Your fans are patient - you can afford to take risks and rebuild.'
+                  : context.fanPatience >= 4
+                  ? 'Balance is key - some risk is acceptable but prolonged losing will hurt.'
+                  : 'High pressure situation - failures have immediate consequences.'}
+              </p>
             </div>
           </div>
 
@@ -134,24 +351,6 @@ const Dashboard: React.FC = () => {
               )}
             </div>
           </div>
-
-          {/* Season History */}
-          {seasonResults.length > 0 && (
-            <div className="bg-arena-mid rounded-xl p-5 border border-gray-700">
-              <h2 className="font-heading text-lg font-bold text-white mb-4">Season History</h2>
-              <div className="space-y-2">
-                {seasonResults.map(result => (
-                  <div key={result.season} className="flex justify-between items-center text-sm bg-arena-dark rounded-lg p-3">
-                    <span className="text-gray-400">Season {result.season}</span>
-                    <span className="font-stats text-white">{result.wins}-{result.losses}</span>
-                    <span className={`font-medium ${result.playoffResult === 'champion' ? 'text-yellow-400' : result.playoffResult !== 'missed' ? 'text-green-400' : 'text-gray-400'}`}>
-                      {result.playoffResult === 'champion' ? 'Champion!' : result.playoffResult.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Middle Column - Roster */}
@@ -178,7 +377,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Column - Standings */}
+        {/* Right Column - Standings & History */}
         <div className="space-y-6">
           <div className="bg-arena-mid rounded-xl p-5 border border-gray-700">
             <h2 className="font-heading text-lg font-bold text-white mb-4">{team.conference} Standings</h2>
@@ -204,6 +403,40 @@ const Dashboard: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Season History */}
+          {seasonResults.length > 0 && (
+            <div className="bg-arena-mid rounded-xl p-5 border border-gray-700">
+              <h2 className="font-heading text-lg font-bold text-white mb-4">Season History</h2>
+              <div className="space-y-2">
+                {seasonResults.map(result => (
+                  <div key={result.season} className="bg-arena-dark rounded-lg p-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Season {result.season}</span>
+                      <span className="font-stats text-white">{result.wins}-{result.losses}</span>
+                    </div>
+                    <div className="flex justify-between items-center mt-1">
+                      <span className={`text-sm font-medium ${result.playoffResult === 'champion' ? 'text-yellow-400' : result.playoffResult !== 'missed' ? 'text-green-400' : 'text-gray-400'}`}>
+                        {result.playoffResult === 'champion' ? 'Champion!' : result.playoffResult.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                      </span>
+                      <span className={`text-xs ${(result.profit || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {(result.profit || 0) >= 0 ? '+' : ''}${(result.profit || 0).toFixed(1)}M
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        result.riskRating === 'aggressive' ? 'bg-red-900/30 text-red-400' :
+                        result.riskRating === 'balanced' ? 'bg-yellow-900/30 text-yellow-400' :
+                        'bg-blue-900/30 text-blue-400'
+                      }`}>
+                        {result.riskRating}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

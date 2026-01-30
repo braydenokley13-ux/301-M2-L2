@@ -118,12 +118,44 @@ export interface Strategy {
   youthDevelopment: number;
 }
 
+// Financial tracking for economic concepts
+export interface FinancialState {
+  salaryCap: number;        // $140M soft cap
+  luxuryTaxThreshold: number; // $170M luxury tax line
+  salaryFloor: number;      // $110M minimum spending
+  currentPayroll: number;
+  luxuryTaxOwed: number;
+  revenue: number;
+  expenses: number;
+  profit: number;
+  consecutiveTaxYears: number;
+}
+
+// Volatility tracking for risk education
+export interface VolatilityMetrics {
+  winVariance: number;        // How much wins vary season to season
+  riskDecisionsMade: number;  // Count of high-risk moves
+  bigSwingsAttempted: number; // Major trades/signings
+  volatilityRating: 'stable' | 'moderate' | 'volatile' | 'extreme';
+}
+
+// Risk decision tracking
+export interface RiskDecision {
+  id: string;
+  season: number;
+  type: 'trade' | 'signing' | 'draft' | 'strategy';
+  description: string;
+  riskLevel: 'low' | 'medium' | 'high';
+  outcome: 'pending' | 'success' | 'failure' | 'neutral';
+  volatilityImpact: number; // How much it affected team volatility
+}
+
 export interface GameState {
   userId: string;
   teamId: string;
   currentSeason: number;
   currentWeek: number;
-  phase: 'team_selection' | 'offseason_free_agency' | 'offseason_draft' | 'preseason' | 'regular_season' | 'playoffs' | 'season_end';
+  phase: 'intro' | 'team_selection' | 'offseason_free_agency' | 'offseason_draft' | 'preseason' | 'regular_season' | 'playoffs' | 'season_end' | 'game_complete';
   strategy: StrategyType;
   salaryCap: number;
   salaryCapSpace: number;
@@ -141,6 +173,11 @@ export interface GameState {
   seasonResults: SeasonResult[];
   newsLog: NewsItem[];
   momentum: number; // -50 to 50
+  // New fields for economic and risk tracking
+  financials: FinancialState;
+  volatility: VolatilityMetrics;
+  riskDecisions: RiskDecision[];
+  maxSeasons: number; // Game ends after this many seasons (default 3)
 }
 
 export interface SeasonResult {
@@ -152,6 +189,14 @@ export interface SeasonResult {
   bestPlayer: string;
   fanApproval: number;
   revenue: number;
+  // Economic tracking
+  payroll: number;
+  luxuryTaxPaid: number;
+  profit: number;
+  // Risk tracking
+  riskRating: 'conservative' | 'balanced' | 'aggressive';
+  bigSwings: number;
+  volatilityScore: number;
 }
 
 export interface NewsItem {
