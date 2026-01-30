@@ -2,98 +2,183 @@ import { Player, Team, TradeProposal, DraftPick, Position } from '../data/types'
 import { SALARY_CAP } from './economics';
 
 /**
- * Calculate base player value
+ * TRADE SYSTEM PHILOSOPHY:
+ *
+ * In real sports, star players are worth exponentially more than role players.
+ * You can NOT trade 5 average players for one superstar - it simply doesn't work.
+ *
+ * This system uses TIERS to reflect this reality:
+ * - SUPERSTAR (90+ OVR): Franchise-defining players. Worth more than any combination of non-stars.
+ * - STAR (85-89 OVR): All-star caliber. Require star-level return or massive asset hauls.
+ * - QUALITY STARTER (78-84 OVR): Solid contributors. Can be combined to get stars with picks.
+ * - ROLE PLAYER (70-77 OVR): Useful pieces. Many needed to equal one quality starter.
+ * - FILLER (< 70 OVR): Minimal trade value. Often negative value due to salary.
+ *
+ * KEY RULE: Players outside the tier can't reach the tier above no matter the quantity.
+ * 5 role players will NEVER equal a star's value.
+ */
+
+// ========================
+// TIER DEFINITIONS
+// ========================
+
+type PlayerTier = 'superstar' | 'star' | 'quality_starter' | 'role_player' | 'filler';
+
+function getPlayerTier(player: Player): PlayerTier {
+  if (player.overallRating >= 90) return 'superstar';
+  if (player.overallRating >= 85 || player.isStar) return 'star';
+  if (player.overallRating >= 78) return 'quality_starter';
+  if (player.overallRating >= 70) return 'role_player';
+  return 'filler';
+}
+
+// Base values by tier - note the exponential gaps
+const TIER_BASE_VALUES: Record<PlayerTier, number> = {
+  superstar: 500,       // Franchise cornerstone
+  star: 250,            // All-star caliber
+  quality_starter: 80,  // Solid starter
+  role_player: 25,      // Bench/rotation piece
+  filler: 5,            // Minimal value
+};
+
+// Maximum possible value from combining players of a lower tier
+// This prevents trading multiple lower-tier players for higher-tier ones
+const TIER_CEILINGS: Record<PlayerTier, number> = {
+  superstar: Infinity,  // No ceiling
+  star: 400,            // Can't reach superstar value (500) by combining stars
+  quality_starter: 180, // Can't reach star value (250) by combining starters
+  role_player: 60,      // Can't reach quality starter value (80) by combining role players
+  filler: 15,           // Can't reach role player value (25) by combining fillers
+};
+
+// ========================
+// PLAYER VALUE CALCULATION
+// ========================
+
+/**
+ * Calculate individual player value based on tier + modifiers
  */
 export function calculatePlayerValue(player: Player): number {
-  const ratingValue = player.overallRating * 2;
-  const potentialBonus = Math.max(0, (player.potential - player.overallRating)) * 1.5;
-  const ageFactor = player.age <= 25 ? 1.3 : player.age <= 28 ? 1.1 : player.age <= 32 ? 0.9 : 0.6;
-  const contractFactor = player.contractYears <= 1 ? 0.7 : player.contractYears <= 3 ? 1.0 : 0.9;
-  const salaryPenalty = player.salary > 30 ? -10 : player.salary > 20 ? -5 : 0;
-  const starBonus = player.isStar ? 25 : 0;
+  const tier = getPlayerTier(player);
+  let baseValue = TIER_BASE_VALUES[tier];
 
-  return Math.round((ratingValue + potentialBonus + starBonus + salaryPenalty) * ageFactor * contractFactor);
+  // Rating bonus within tier
+  const tierFloor = tier === 'superstar' ? 90 : tier === 'star' ? 85 : tier === 'quality_starter' ? 78 : tier === 'role_player' ? 70 : 60;
+  const ratingBonus = (player.overallRating - tierFloor) * (tier === 'superstar' ? 20 : tier === 'star' ? 15 : 5);
+
+  // Age factor - young players worth more, old players worth less
+  let ageFactor = 1.0;
+  if (player.age <= 23) ageFactor = 1.4;
+  else if (player.age <= 26) ageFactor = 1.2;
+  else if (player.age <= 28) ageFactor = 1.0;
+  else if (player.age <= 31) ageFactor = 0.8;
+  else if (player.age <= 33) ageFactor = 0.5;
+  else ageFactor = 0.3;
+
+  // Potential bonus (especially important for young players)
+  const potentialGap = Math.max(0, player.potential - player.overallRating);
+  const potentialBonus = potentialGap * (player.age <= 25 ? 3 : 1);
+
+  // Contract considerations
+  let contractFactor = 1.0;
+  if (player.contractYears === 1) contractFactor = 0.85; // Expiring - flight risk
+  else if (player.contractYears >= 4 && player.age > 30) contractFactor = 0.7; // Long deal on aging player
+  else if (player.contractYears >= 2 && player.contractYears <= 3) contractFactor = 1.1; // Ideal control
+
+  // Salary burden for overpaid players
+  const expectedSalary = Math.max(5, (player.overallRating - 60) * 1.2);
+  const salaryPenalty = player.salary > expectedSalary ? (player.salary - expectedSalary) * 2 : 0;
+
+  const finalValue = Math.round((baseValue + ratingBonus + potentialBonus) * ageFactor * contractFactor - salaryPenalty);
+
+  return Math.max(1, finalValue); // Minimum value of 1
 }
+
+/**
+ * Calculate total value of multiple players WITH TIER CEILING ENFORCEMENT
+ *
+ * This is the key innovation: players are grouped by tier, and each tier's
+ * total contribution is CAPPED. You can't overcome this by adding more players.
+ */
+function calculatePackageValue(players: Player[]): number {
+  if (players.length === 0) return 0;
+
+  // Group players by tier
+  const byTier: Record<PlayerTier, Player[]> = {
+    superstar: [],
+    star: [],
+    quality_starter: [],
+    role_player: [],
+    filler: [],
+  };
+
+  players.forEach(p => {
+    byTier[getPlayerTier(p)].push(p);
+  });
+
+  let totalValue = 0;
+
+  // Calculate each tier's contribution with ceiling
+  for (const tier of ['superstar', 'star', 'quality_starter', 'role_player', 'filler'] as PlayerTier[]) {
+    const tierPlayers = byTier[tier];
+    if (tierPlayers.length === 0) continue;
+
+    // Sort by value within tier (best first)
+    tierPlayers.sort((a, b) => calculatePlayerValue(b) - calculatePlayerValue(a));
+
+    // Apply diminishing returns within tier
+    let tierValue = 0;
+    const diminishingFactors = [1.0, 0.6, 0.35, 0.2, 0.1]; // Very aggressive diminishing returns
+
+    tierPlayers.forEach((player, idx) => {
+      const factor = diminishingFactors[Math.min(idx, diminishingFactors.length - 1)];
+      tierValue += calculatePlayerValue(player) * factor;
+    });
+
+    // Apply tier ceiling
+    const cappedValue = Math.min(tierValue, TIER_CEILINGS[tier]);
+    totalValue += cappedValue;
+  }
+
+  // Roster dump penalty - offering too many players is a red flag
+  if (players.length > 3) {
+    const dumpPenalty = (players.length - 3) * 15;
+    totalValue = Math.max(1, totalValue - dumpPenalty);
+  }
+
+  return Math.round(totalValue);
+}
+
+// ========================
+// DRAFT PICK VALUES
+// ========================
 
 export function calculateDraftPickValue(pick: DraftPick, projectedPosition?: number): number {
   const pos = projectedPosition || pick.projectedPosition || 15;
-  const baseValue = Math.max(20, 150 - pos * 4);
-  const roundMultiplier = pick.round === 1 ? 1.0 : 0.35;
-  const yearDiscount = pick.year > 1 ? 0.85 : 1.0;
+
+  // Top picks are extremely valuable
+  let baseValue: number;
+  if (pos <= 3) baseValue = 200 + (4 - pos) * 50; // #1 = 350, #2 = 300, #3 = 250
+  else if (pos <= 5) baseValue = 150;
+  else if (pos <= 10) baseValue = 100;
+  else if (pos <= 14) baseValue = 60;
+  else baseValue = 30; // Late first rounders
+
+  // Second round picks worth much less
+  const roundMultiplier = pick.round === 1 ? 1.0 : 0.2;
+
+  // Future picks slightly discounted
+  const yearDiscount = pick.year > 1 ? 0.9 : 1.0;
 
   return Math.round(baseValue * roundMultiplier * yearDiscount);
 }
 
-/**
- * Calculate diminishing returns for multiple players
- *
- * KEY LESSON: More players doesn't automatically mean more value.
- * Quality over quantity - you can't trade 5 bench players for a star.
- * First player = 100%, second = 85%, third = 70%, etc.
- */
-function calculateDiminishingReturns(players: Player[]): number {
-  // Sort by value (best player first)
-  const sortedByValue = [...players].sort((a, b) =>
-    calculatePlayerValue(b) - calculatePlayerValue(a)
-  );
-
-  let totalValue = 0;
-  const diminishingFactors = [1.0, 0.85, 0.70, 0.55, 0.40];
-
-  sortedByValue.forEach((player, index) => {
-    const factor = diminishingFactors[Math.min(index, diminishingFactors.length - 1)];
-    totalValue += calculatePlayerValue(player) * factor;
-  });
-
-  return totalValue;
-}
+// ========================
+// TRADE EVALUATION
+// ========================
 
 /**
- * Star player premium - stars are irreplaceable difference-makers
- *
- * LESSON: Stars are worth more than their raw value because they're
- * irreplaceable. This is why teams "overpay" for superstars.
- */
-function calculateStarPremium(players: Player[]): number {
-  let premium = 0;
-  players.forEach(player => {
-    if (player.isStar) {
-      premium += 30; // Significant premium for star players
-    }
-    if (player.overallRating >= 85) {
-      premium += 15; // Premium for elite-level players
-    } else if (player.overallRating >= 80) {
-      premium += 10; // Moderate premium for very good players
-    }
-  });
-  return premium;
-}
-
-/**
- * Quality threshold penalty - bunch of bad players isn't worth one good one
- *
- * LESSON: Quantity doesn't compensate for quality. You can't dump your
- * problems on another team and call it a fair trade.
- */
-function calculateQualityPenalty(players: Player[]): number {
-  let penalty = 0;
-  const subparPlayers = players.filter(p => p.overallRating < 70);
-
-  // Each player below 70 OVR adds a penalty
-  subparPlayers.forEach(player => {
-    penalty += (70 - player.overallRating) * 0.5;
-  });
-
-  // Extra penalty if offering more than 2 sub-par players (roster dump)
-  if (subparPlayers.length > 2) {
-    penalty += (subparPlayers.length - 2) * 15;
-  }
-
-  return penalty;
-}
-
-/**
- * Position fit bonus/penalty for receiving team
+ * Position fit bonus/penalty
  */
 function calculatePositionFit(team: Team, receivingPlayers: Player[]): number {
   let fitScore = 0;
@@ -103,7 +188,7 @@ function calculatePositionFit(team: Team, receivingPlayers: Player[]): number {
 
   receivingPlayers.forEach(player => {
     if (positionCount[player.position] < 2) {
-      fitScore += 10; // Bonus for filling a need
+      fitScore += 15; // Bonus for filling a need
     } else if (positionCount[player.position] >= 4) {
       fitScore -= 10; // Penalty for roster redundancy
     }
@@ -113,30 +198,7 @@ function calculatePositionFit(team: Team, receivingPlayers: Player[]): number {
 }
 
 /**
- * Contract value consideration - bad contracts reduce value
- */
-function calculateContractBurden(players: Player[]): number {
-  let burden = 0;
-  players.forEach(player => {
-    // Overpaid player penalty (salary > expected for rating)
-    const expectedSalary = (player.overallRating - 60) * 0.8 + 5;
-    if (player.salary > expectedSalary + 5) {
-      burden += (player.salary - expectedSalary) * 2;
-    }
-    // Long contract on declining player
-    if (player.age > 30 && player.contractYears >= 3) {
-      burden += 15;
-    }
-  });
-  return burden;
-}
-
-/**
  * Calculate the risk level of a trade
- *
- * LESSON: Trades have different risk profiles. Trading proven players
- * for potential is high-risk/high-reward. Some teams can afford that
- * volatility, others can't.
  */
 export function calculateTradeRisk(
   playersOffered: Player[],
@@ -147,38 +209,36 @@ export function calculateTradeRisk(
   let riskScore = 0;
   let explanations: string[] = [];
 
-  // Trading proven talent for picks = high risk
-  const provenTalentTraded = playersOffered.filter(p => p.overallRating >= 75 && p.age <= 30);
-  const picksReceived = picksRequested.length;
-
-  if (provenTalentTraded.length > 0 && picksReceived > provenTalentTraded.length) {
-    riskScore += 30;
-    explanations.push('Trading proven talent for future picks increases volatility');
+  // Trading stars = franchise-altering risk
+  const starsTraded = playersOffered.filter(p => getPlayerTier(p) === 'star' || getPlayerTier(p) === 'superstar');
+  if (starsTraded.length > 0) {
+    riskScore += 40 * starsTraded.length;
+    explanations.push('Trading star-caliber players is a franchise-defining decision');
   }
 
-  // Trading for young unproven players = medium risk
-  const youngUnproven = playersRequested.filter(p => p.age <= 24 && p.overallRating < 75);
+  // Acquiring unproven young players = high variance
+  const youngUnproven = playersRequested.filter(p => p.age <= 23 && p.overallRating < 78);
   if (youngUnproven.length > 0) {
     riskScore += 15 * youngUnproven.length;
-    explanations.push('Acquiring young unproven players adds uncertainty');
+    explanations.push('Young unproven players add uncertainty');
   }
 
-  // Trading away picks = reduces future flexibility
-  if (picksOffered.filter(p => p.round === 1).length > 0) {
+  // Trading first round picks = limiting future options
+  const firstRounders = picksOffered.filter(p => p.round === 1);
+  if (firstRounders.length > 0) {
+    riskScore += 25 * firstRounders.length;
+    explanations.push('Trading first-round picks limits future flexibility');
+  }
+
+  // Receiving picks instead of players = betting on unknown future
+  if (picksRequested.length > playersRequested.length) {
     riskScore += 20;
-    explanations.push('Trading first-round picks limits future options');
-  }
-
-  // Star trades are always high-impact
-  const starMoved = [...playersOffered, ...playersRequested].some(p => p.isStar);
-  if (starMoved) {
-    riskScore += 25;
-    explanations.push('Star player trades have franchise-altering impact');
+    explanations.push('Acquiring picks over proven players increases volatility');
   }
 
   let riskLevel: 'low' | 'medium' | 'high' = 'low';
-  if (riskScore >= 50) riskLevel = 'high';
-  else if (riskScore >= 25) riskLevel = 'medium';
+  if (riskScore >= 60) riskLevel = 'high';
+  else if (riskScore >= 30) riskLevel = 'medium';
 
   return {
     riskLevel,
@@ -190,7 +250,7 @@ export function calculateTradeRisk(
 }
 
 /**
- * Validate if trade is legal under salary cap rules
+ * Validate salary matching rules
  */
 export function validateTradeSalary(
   fromTeam: Team,
@@ -208,7 +268,7 @@ export function validateTradeSalary(
     if (incomingSalary > maxIncoming) {
       return {
         valid: false,
-        reason: `Over cap teams can only receive $${Math.round(maxIncoming)}M (125% of $${outgoingSalary.toFixed(1)}M outgoing + $100K)`
+        reason: `Over cap teams can only receive $${Math.round(maxIncoming)}M (125% of $${outgoingSalary.toFixed(1)}M outgoing)`
       };
     }
   }
@@ -228,11 +288,7 @@ export function validateTradeSalary(
 }
 
 /**
- * Main trade evaluation function with improved logic
- *
- * KEY LESSON: Trade value isn't just about adding up player ratings.
- * Context matters - position fit, contract situations, star power,
- * and diminishing returns all affect true value.
+ * Main trade evaluation - compares package values
  */
 export function evaluateTrade(
   fromTeam: Team,
@@ -243,63 +299,38 @@ export function evaluateTrade(
   picksRequested: DraftPick[],
 ): { fairnessScore: number; fromValue: number; toValue: number; analysis: string; riskAssessment: ReturnType<typeof calculateTradeRisk> } {
 
-  // Base values with diminishing returns
-  const offeredPlayerValue = calculateDiminishingReturns(playersOffered);
-  const requestedPlayerValue = calculateDiminishingReturns(playersRequested);
+  // Calculate package values (with tier ceilings applied)
+  const offeredPlayerValue = calculatePackageValue(playersOffered);
+  const requestedPlayerValue = calculatePackageValue(playersRequested);
 
   // Draft pick values
   const offeredPickValue = picksOffered.reduce((sum, p) => sum + calculateDraftPickValue(p), 0);
   const requestedPickValue = picksRequested.reduce((sum, p) => sum + calculateDraftPickValue(p), 0);
 
-  // Star premiums (what you're giving up vs getting)
-  const requestedStarPremium = calculateStarPremium(playersRequested);
-  const offeredStarPremium = calculateStarPremium(playersOffered);
-
-  // Quality penalties
-  const offeredQualityPenalty = calculateQualityPenalty(playersOffered);
-  const requestedQualityPenalty = calculateQualityPenalty(playersRequested);
-
-  // Position fit for AI team (toTeam)
+  // Position fit bonus for AI team
   const positionFitForAI = calculatePositionFit(toTeam, playersOffered);
 
-  // Contract burden
-  const offeredContractBurden = calculateContractBurden(playersOffered);
-  const requestedContractBurden = calculateContractBurden(playersRequested);
+  // Total values
+  const fromValue = Math.round(offeredPlayerValue + offeredPickValue + positionFitForAI);
+  const toValue = Math.round(requestedPlayerValue + requestedPickValue);
 
-  // Calculate final values
-  const fromValue = Math.round(
-    offeredPlayerValue +
-    offeredPickValue +
-    offeredStarPremium -
-    offeredQualityPenalty -
-    offeredContractBurden +
-    positionFitForAI
-  );
-
-  const toValue = Math.round(
-    requestedPlayerValue +
-    requestedPickValue +
-    requestedStarPremium -
-    requestedQualityPenalty -
-    requestedContractBurden
-  );
-
+  // Calculate fairness as percentage difference
   const diff = fromValue - toValue;
-  const avgValue = (fromValue + toValue) / 2 || 1;
+  const avgValue = Math.max(1, (fromValue + toValue) / 2);
   const fairnessScore = Math.round((diff / avgValue) * 100);
 
   // Risk assessment
   const riskAssessment = calculateTradeRisk(playersOffered, playersRequested, picksOffered, picksRequested);
 
-  // Generate detailed analysis
-  let analysis = generateTradeAnalysis(
+  // Generate analysis
+  const analysis = generateTradeAnalysis(
     fairnessScore,
     fromTeam,
     toTeam,
     playersOffered,
     playersRequested,
-    offeredQualityPenalty,
-    requestedStarPremium
+    fromValue,
+    toValue
   );
 
   return { fairnessScore, fromValue, toValue, analysis, riskAssessment };
@@ -311,54 +342,78 @@ function generateTradeAnalysis(
   toTeam: Team,
   playersOffered: Player[],
   playersRequested: Player[],
-  qualityPenalty: number,
-  starPremium: number
+  fromValue: number,
+  toValue: number
 ): string {
-  let analysis: string;
+  const messages: string[] = [];
 
-  if (Math.abs(fairnessScore) <= 10) {
-    analysis = 'Fair trade for both sides.';
-  } else if (fairnessScore > 10 && fairnessScore <= 30) {
-    analysis = `${fromTeam.city} is overpaying slightly.`;
-  } else if (fairnessScore > 30) {
-    analysis = `${fromTeam.city} is significantly overpaying. The other team is likely to accept.`;
-  } else if (fairnessScore < -10 && fairnessScore >= -30) {
-    analysis = `${toTeam.city} would need more to make this work.`;
+  // Main fairness message
+  if (Math.abs(fairnessScore) <= 15) {
+    messages.push('Fair trade for both sides.');
+  } else if (fairnessScore > 15 && fairnessScore <= 40) {
+    messages.push(`${fromTeam.city} is offering a good package.`);
+  } else if (fairnessScore > 40) {
+    messages.push(`${fromTeam.city} is overpaying significantly. Likely to be accepted.`);
+  } else if (fairnessScore < -15 && fairnessScore >= -40) {
+    messages.push(`${toTeam.city} would need more value to accept.`);
   } else {
-    analysis = `This trade heavily favors ${fromTeam.city}. Very unlikely to be accepted.`;
+    messages.push(`This trade heavily favors ${fromTeam.city}. Will not be accepted.`);
   }
 
-  // Add context about why
-  if (qualityPenalty > 20) {
-    analysis += ' Multiple low-value players decrease trade appeal - quality matters more than quantity.';
-  }
-  if (starPremium > 25) {
-    analysis += ' Star players command a significant premium in trades.';
-  }
-  if (playersOffered.length > 3) {
-    analysis += ' Trading many players for few reduces overall value due to diminishing returns.';
+  // Tier mismatch warnings
+  const requestedStars = playersRequested.filter(p => getPlayerTier(p) === 'star' || getPlayerTier(p) === 'superstar');
+  const offeredStars = playersOffered.filter(p => getPlayerTier(p) === 'star' || getPlayerTier(p) === 'superstar');
+
+  if (requestedStars.length > 0 && offeredStars.length === 0) {
+    const nonStarValue = calculatePackageValue(playersOffered.filter(p => getPlayerTier(p) !== 'star' && getPlayerTier(p) !== 'superstar'));
+    const starValue = calculatePackageValue(requestedStars);
+
+    if (nonStarValue < starValue * 0.7) {
+      messages.push(`Star players require star-level returns. Role players alone cannot match their value.`);
+    }
   }
 
-  return analysis;
+  // Quantity warning
+  if (playersOffered.length >= 4) {
+    messages.push('Offering too many players triggers diminishing returns and roster dump penalties.');
+  }
+
+  // Value breakdown for clarity
+  messages.push(`Value: Offering ${fromValue} for ${toValue}.`);
+
+  return messages.join(' ');
 }
 
+/**
+ * Would AI accept this trade?
+ */
 export function wouldAIAcceptTrade(
   fairnessScore: number,
   aiTeam: Team,
   difficulty: 'easy' | 'medium' | 'hard',
 ): boolean {
-  const threshold = difficulty === 'easy' ? -25 : difficulty === 'medium' ? -10 : 0;
+  // AI needs the trade to favor them (or be close to fair)
+  const threshold = difficulty === 'easy' ? -20 : difficulty === 'medium' ? -8 : 0;
   return fairnessScore >= threshold;
 }
 
+/**
+ * AI generates trade proposals (focuses on quality)
+ */
 export function generateAITradeProposal(
   aiTeam: Team,
   targetTeam: Team,
   allTeams: Team[],
 ): TradeProposal | null {
-  // AI focuses on quality over quantity
+  // AI targets quality starters, rarely stars
   const targetPlayers = targetTeam.roster
-    .filter(p => !p.isStar || Math.random() < 0.05) // Very rarely target stars
+    .filter(p => {
+      const tier = getPlayerTier(p);
+      // Never target superstars, rarely target stars
+      if (tier === 'superstar') return false;
+      if (tier === 'star') return Math.random() < 0.05;
+      return tier === 'quality_starter' || (tier === 'role_player' && p.age <= 26);
+    })
     .sort((a, b) => calculatePlayerValue(b) - calculatePlayerValue(a));
 
   if (targetPlayers.length === 0) return null;
@@ -366,28 +421,35 @@ export function generateAITradeProposal(
   const wanted = targetPlayers[0];
   const wantedValue = calculatePlayerValue(wanted);
 
-  // Find quality matches (prefer 1-2 good players over 3+ mediocre)
+  // AI offers players of similar tier (quality for quality)
   const aiTradeable = aiTeam.roster
-    .filter(p => !p.isStar && p.overallRating >= 65) // Don't offer bad players
+    .filter(p => {
+      const tier = getPlayerTier(p);
+      // Don't trade stars for non-stars
+      if (tier === 'superstar' || tier === 'star') return false;
+      // Only offer reasonable quality
+      return p.overallRating >= 68;
+    })
     .sort((a, b) => calculatePlayerValue(b) - calculatePlayerValue(a));
 
   let offeredPlayers: Player[] = [];
   let offeredValue = 0;
 
-  // Try to match with 1-2 quality players first
+  // Try to match with 1-2 players max
   for (const player of aiTradeable) {
-    if (offeredPlayers.length >= 2) break; // Cap at 2 players
-    if (offeredValue >= wantedValue * 0.9) break;
+    if (offeredPlayers.length >= 2) break;
+    if (offeredValue >= wantedValue * 0.95) break;
+
     offeredPlayers.push(player);
-    offeredValue += calculatePlayerValue(player);
+    offeredValue = calculatePackageValue(offeredPlayers);
   }
 
-  // Must offer at least 60% of value without picks
-  if (offeredValue < wantedValue * 0.6) return null;
+  // Must offer reasonable value
+  if (offeredValue < wantedValue * 0.7) return null;
 
-  // Add pick only if needed and available
+  // Add pick if needed
   const picksOffered: DraftPick[] = [];
-  if (offeredValue < wantedValue * 0.85 && aiTeam.draftPicks.length > 2) {
+  if (offeredValue < wantedValue * 0.9 && aiTeam.draftPicks.length > 2) {
     const pick = aiTeam.draftPicks.find(p => p.round === 2) || aiTeam.draftPicks[0];
     if (pick) picksOffered.push(pick);
   }
@@ -405,6 +467,9 @@ export function generateAITradeProposal(
   };
 }
 
+/**
+ * Execute a completed trade
+ */
 export function executeTrade(
   teams: Team[],
   proposal: TradeProposal,
@@ -445,3 +510,6 @@ export function executeTrade(
 
   return { updatedTeams, updatedPlayers };
 }
+
+// Export tier function for UI use
+export { getPlayerTier, type PlayerTier };
