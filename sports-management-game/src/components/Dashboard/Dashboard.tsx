@@ -42,7 +42,7 @@ const Dashboard: React.FC = () => {
     <div className="max-w-7xl mx-auto p-4">
       {/* Season Progress Banner */}
       <div className="bg-gradient-to-r from-basketball-orange/20 to-orange-900/20 border border-basketball-orange/30 rounded-xl p-4 mb-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
             <span className="text-basketball-orange text-sm font-medium">Track 301 - Module 2 - Lesson 2</span>
             <h2 className="text-white font-bold text-lg">Season {currentSeason} of {maxSeasons}</h2>
@@ -63,6 +63,83 @@ const Dashboard: React.FC = () => {
               <div className="text-xs text-gray-400">High-Risk Moves</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* LESSON GOAL TRACKER */}
+      <div className="bg-arena-mid rounded-xl p-5 mb-6 border border-gray-700">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-heading text-lg font-bold text-white">Your Goal: Match Risk to Context</h2>
+          <span className="text-xs text-gray-500">Scored at end of 3 seasons</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Risk-Context Alignment */}
+          <div className="bg-arena-dark rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-3 h-3 rounded-full ${
+                context.ownershipRiskTolerance >= 7
+                  ? (volatility.volatilityRating === 'volatile' || volatility.volatilityRating === 'extreme' ? 'bg-green-500' : 'bg-yellow-500')
+                  : context.ownershipRiskTolerance >= 4
+                  ? (volatility.volatilityRating === 'moderate' ? 'bg-green-500' : 'bg-yellow-500')
+                  : (volatility.volatilityRating === 'stable' ? 'bg-green-500' : 'bg-red-500')
+              }`} />
+              <span className="text-sm font-medium text-white">Risk-Context Fit</span>
+              <span className="text-xs text-basketball-orange ml-auto">40% of score</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              {context.ownershipRiskTolerance >= 7
+                ? 'Your team SHOULD take big risks. Are you being aggressive enough?'
+                : context.ownershipRiskTolerance >= 4
+                ? 'Moderate risk is appropriate. Balance aggression with stability.'
+                : 'Your team should AVOID high risk. Playing it safe is the smart move.'}
+            </p>
+          </div>
+
+          {/* Financial Health */}
+          <div className="bg-arena-dark rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-3 h-3 rounded-full ${
+                team.totalSalary <= LUXURY_TAX_THRESHOLD && team.totalSalary >= SALARY_FLOOR
+                  ? 'bg-green-500'
+                  : team.totalSalary > LUXURY_TAX_THRESHOLD
+                  ? 'bg-yellow-500'
+                  : 'bg-red-500'
+              }`} />
+              <span className="text-sm font-medium text-white">Financial Health</span>
+              <span className="text-xs text-basketball-orange ml-auto">30% of score</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              {team.totalSalary > LUXURY_TAX_THRESHOLD
+                ? 'Over luxury tax threshold. This is expensive but can be worth it for contenders.'
+                : team.totalSalary < SALARY_FLOOR
+                ? 'Below salary floor. You need to spend more on players.'
+                : 'Healthy finances. Good cap management.'}
+            </p>
+          </div>
+
+          {/* On-Court Results */}
+          <div className="bg-arena-dark rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-3 h-3 rounded-full ${
+                team.wins > team.losses ? 'bg-green-500' : team.wins === team.losses ? 'bg-yellow-500' : 'bg-red-500'
+              }`} />
+              <span className="text-sm font-medium text-white">Performance</span>
+              <span className="text-xs text-basketball-orange ml-auto">30% of score</span>
+            </div>
+            <p className="text-xs text-gray-400">
+              {seasonResults.length > 0
+                ? `${seasonResults.filter(s => s.playoffResult !== 'missed').length} playoff appearances, ${seasonResults.filter(s => s.playoffResult === 'champion').length} championships`
+                : 'Season in progress. Results matter, but context matters more.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 p-3 bg-gradient-to-r from-basketball-orange/10 to-transparent rounded-lg border-l-4 border-basketball-orange">
+          <p className="text-sm text-gray-300">
+            <span className="font-bold text-white">KEY INSIGHT:</span> The lesson isn't about always winning—it's about making the RIGHT decisions for YOUR situation.
+            A risky trade that fails might still be the correct choice for a team that needs volatility to escape mediocrity.
+          </p>
         </div>
       </div>
 
