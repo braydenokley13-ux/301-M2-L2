@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useGameStore } from './store/gameStore';
 import IntroPage from './components/IntroPage/IntroPage';
 import TeamSelection from './components/TeamSelection/TeamSelection';
+import TeamOnboarding from './components/TeamOnboarding/TeamOnboarding';
 import Dashboard from './components/Dashboard/Dashboard';
 import RosterManagement from './components/RosterManagement/RosterManagement';
 import TradeHub from './components/TradeHub/TradeHub';
@@ -24,6 +25,11 @@ function App() {
   // Team selection
   if (phase === 'team_selection') {
     return <TeamSelection />;
+  }
+
+  // Team onboarding with Brayden White tutorial
+  if (phase === 'onboarding') {
+    return <TeamOnboarding />;
   }
 
   // Game complete - show final evaluation and claim code
