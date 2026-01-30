@@ -1,13 +1,12 @@
 import { create } from 'zustand';
-import { GameState, Team, Player, TradeProposal, NewsItem, SeasonResult, StrategyType } from '../data/types';
+import { GameState, Team, Player, TradeProposal, NewsItem, SeasonResult, StrategyType, FinancialState, VolatilityMetrics, RiskDecision } from '../data/types';
 import { initializeAllTeams } from '../data/teams';
 import { generateAllPlayers, fillRostersToMinimum } from '../data/players';
 import { generateFreeAgents, calculatePlayerInterest, willAcceptOffer, signFreeAgent } from '../game/freeAgency';
 import { generateDraftClass, draftProspectToPlayer, aiDraftPick } from '../game/draftSystem';
-import { evaluateTrade, executeTrade, wouldAIAcceptTrade } from '../game/tradeSystem';
+import { evaluateTrade, executeTrade, wouldAIAcceptTrade, validateTradeSalary } from '../game/tradeSystem';
 import { simulateRegularSeason, simulatePlayoffs, getSeasonMVP, PlayoffBracketRound } from '../game/seasonSimulator';
-// AI manager available for future offseason processing
-// import { processAIOffseason } from '../game/aiManager';
+import { generateFinancialReport, getPlayoffRoundFromResult, SALARY_CAP, LUXURY_TAX_THRESHOLD, SALARY_FLOOR } from '../game/economics';
 
 interface GameStore extends GameState {
   // Initialization
@@ -16,6 +15,7 @@ interface GameStore extends GameState {
   // Phase management
   setPhase: (phase: GameState['phase']) => void;
   advancePhase: () => void;
+  startNextSeason: () => void;
 
   // Strategy
   setStrategy: (strategy: StrategyType) => void;
@@ -33,6 +33,9 @@ interface GameStore extends GameState {
   // Season
   simulateSeason: () => void;
 
+  // Risk tracking
+  addRiskDecision: (decision: Omit<RiskDecision, 'id'>) => void;
+
   // News
   addNews: (news: Omit<NewsItem, 'id'>) => void;
 
@@ -49,16 +52,37 @@ interface GameStore extends GameState {
   currentDraftPick: number;
 }
 
+// Default financial state
+const defaultFinancials: FinancialState = {
+  salaryCap: SALARY_CAP,
+  luxuryTaxThreshold: LUXURY_TAX_THRESHOLD,
+  salaryFloor: SALARY_FLOOR,
+  currentPayroll: 0,
+  luxuryTaxOwed: 0,
+  revenue: 100,
+  expenses: 0,
+  profit: 0,
+  consecutiveTaxYears: 0,
+};
+
+// Default volatility metrics
+const defaultVolatility: VolatilityMetrics = {
+  winVariance: 0,
+  riskDecisionsMade: 0,
+  bigSwingsAttempted: 0,
+  volatilityRating: 'stable',
+};
+
 export const useGameStore = create<GameStore>((set, get) => ({
   // Initial state
   userId: 'user-1',
   teamId: '',
   currentSeason: 1,
   currentWeek: 0,
-  phase: 'team_selection',
+  phase: 'intro', // Start with intro page
   strategy: 'stability_first',
-  salaryCap: 140,
-  salaryCapSpace: 140,
+  salaryCap: SALARY_CAP,
+  salaryCapSpace: SALARY_CAP,
   fanApproval: 70,
   ownerConfidence: 70,
   mediaRating: 50,
@@ -78,6 +102,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   playoffBracket: [],
   draftOrder: [],
   currentDraftPick: 0,
+  // New state
+  financials: defaultFinancials,
+  volatility: defaultVolatility,
+  riskDecisions: [],
+  maxSeasons: 3, // Game ends after 3 seasons
 
   initializeGame: (teamId, difficulty, strategy) => {
     const teams = initializeAllTeams();
@@ -98,6 +127,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const freeAgents = generateFreeAgents(30);
     const draftProspects = generateDraftClass(60);
 
+    // Initialize financials
+    const initialFinancials: FinancialState = {
+      ...defaultFinancials,
+      currentPayroll: userTeam.totalSalary,
+    };
+
     set({
       teamId,
       difficulty,
@@ -107,17 +142,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
       freeAgents,
       draftProspects,
       phase: 'preseason',
-      salaryCap: 140,
-      salaryCapSpace: 140 - userTeam.totalSalary,
+      salaryCap: SALARY_CAP,
+      salaryCapSpace: SALARY_CAP - userTeam.totalSalary,
       fanApproval: userTeam.fanbase,
       ownerConfidence: 70,
       mediaRating: 50,
+      financials: initialFinancials,
+      volatility: defaultVolatility,
+      riskDecisions: [],
       newsLog: [{
         id: 'news-start',
         week: 0,
         season: 1,
         title: `Welcome to ${userTeam.city}!`,
-        body: `You have been hired as the new GM of the ${userTeam.city} ${userTeam.name}. Your journey begins now.`,
+        body: `You have been hired as the new GM of the ${userTeam.city} ${userTeam.name}. You have 3 seasons to prove yourself. Remember: risk isn't about courage - it's about whether your system can absorb the consequences.`,
         type: 'general',
         teamIds: [teamId],
       }],
@@ -138,7 +176,73 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  setStrategy: (strategy) => set({ strategy }),
+  startNextSeason: () => {
+    const state = get();
+
+    // Check if game should end (after 3 seasons)
+    if (state.currentSeason >= state.maxSeasons) {
+      set({ phase: 'game_complete' });
+      return;
+    }
+
+    // Generate new draft class and free agents for next season
+    const draftProspects = generateDraftClass(60);
+    const freeAgents = generateFreeAgents(30);
+
+    // Age players and update contracts
+    const updatedPlayers = state.allPlayers.map(p => ({
+      ...p,
+      age: p.age + 1,
+      contractYears: Math.max(0, p.contractYears - 1),
+    }));
+
+    // Reset team records
+    const updatedTeams = state.teams.map(t => ({
+      ...t,
+      wins: 0,
+      losses: 0,
+    }));
+
+    set({
+      currentSeason: state.currentSeason + 1,
+      currentWeek: 0,
+      phase: 'preseason',
+      allPlayers: updatedPlayers,
+      teams: updatedTeams,
+      draftProspects,
+      freeAgents,
+      newsLog: [...state.newsLog, {
+        id: `news-newseason-${state.currentSeason + 1}`,
+        week: 0,
+        season: state.currentSeason + 1,
+        title: `Season ${state.currentSeason + 1} Begins`,
+        body: `A new season is upon us. ${state.maxSeasons - state.currentSeason} season(s) remaining in your tenure.`,
+        type: 'season',
+        teamIds: [state.teamId],
+      }],
+    });
+  },
+
+  setStrategy: (strategy) => {
+    const state = get();
+
+    // Track strategy change as a risk decision
+    const riskLevel = strategy === 'boom_bust_swing' ? 'high' :
+                      strategy === 'aggressive_push' ? 'medium' : 'low';
+
+    if (state.strategy !== strategy) {
+      get().addRiskDecision({
+        season: state.currentSeason,
+        type: 'strategy',
+        description: `Changed strategy to ${strategy.replace('_', ' ')}`,
+        riskLevel,
+        outcome: 'pending',
+        volatilityImpact: riskLevel === 'high' ? 20 : riskLevel === 'medium' ? 10 : 0,
+      });
+    }
+
+    set({ strategy });
+  },
 
   proposeTrade: (proposal) => {
     const state = get();
@@ -150,8 +254,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const picksOffered = fromTeam.draftPicks.filter(p => proposal.picksOffered.includes(p.id));
     const picksRequested = toTeam.draftPicks.filter(p => proposal.picksRequested.includes(p.id));
 
+    // Validate salary cap rules
+    const salaryValidation = validateTradeSalary(fromTeam, toTeam, playersOffered, playersRequested, state.salaryCap);
+    if (!salaryValidation.valid) {
+      return { accepted: false, analysis: `Trade rejected: ${salaryValidation.reason}` };
+    }
+
     const evaluation = evaluateTrade(fromTeam, toTeam, playersOffered, playersRequested, picksOffered, picksRequested);
     const accepted = wouldAIAcceptTrade(evaluation.fairnessScore, toTeam, state.difficulty);
+
+    // Track as risk decision
+    get().addRiskDecision({
+      season: state.currentSeason,
+      type: 'trade',
+      description: `Trade with ${toTeam.city}: ${playersOffered.map(p => p.name).join(', ')} for ${playersRequested.map(p => p.name).join(', ')}`,
+      riskLevel: evaluation.riskAssessment.riskLevel,
+      outcome: accepted ? 'pending' : 'failure',
+      volatilityImpact: evaluation.riskAssessment.volatilityImpact,
+    });
 
     if (accepted) {
       const { updatedTeams, updatedPlayers } = executeTrade(state.teams, {
@@ -162,11 +282,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }, state.allPlayers);
 
       const userTeam = updatedTeams.find(t => t.id === state.teamId)!;
+      const newCapSpace = state.salaryCap - userTeam.totalSalary;
+
+      // Update volatility metrics
+      const newVolatility = {
+        ...state.volatility,
+        riskDecisionsMade: state.volatility.riskDecisionsMade + 1,
+        bigSwingsAttempted: evaluation.riskAssessment.riskLevel === 'high'
+          ? state.volatility.bigSwingsAttempted + 1
+          : state.volatility.bigSwingsAttempted,
+      };
 
       set({
         teams: updatedTeams,
         allPlayers: updatedPlayers,
-        salaryCapSpace: state.salaryCap - userTeam.totalSalary,
+        salaryCapSpace: newCapSpace,
+        financials: {
+          ...state.financials,
+          currentPayroll: userTeam.totalSalary,
+        },
+        volatility: newVolatility,
         tradeHistory: [...state.tradeHistory, {
           ...proposal,
           id: `trade-${Date.now()}`,
@@ -178,7 +313,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           week: state.currentWeek,
           season: state.currentSeason,
           title: 'Trade completed!',
-          body: `${fromTeam.city} ${fromTeam.name} and ${toTeam.city} ${toTeam.name} have completed a trade.`,
+          body: `${fromTeam.city} ${fromTeam.name} and ${toTeam.city} ${toTeam.name} have completed a trade. Risk level: ${evaluation.riskAssessment.riskLevel}.`,
           type: 'trade',
           teamIds: [fromTeam.id, toTeam.id],
         }],
@@ -211,11 +346,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return t;
     });
 
+    const newCapSpace = state.salaryCapSpace - salary;
+
+    // Track risk level based on contract size
+    const riskLevel = salary > 25 ? 'high' : salary > 15 ? 'medium' : 'low';
+    get().addRiskDecision({
+      season: state.currentSeason,
+      type: 'signing',
+      description: `Signed ${newPlayer.name} to ${years}-year, $${salary}M contract`,
+      riskLevel,
+      outcome: 'pending',
+      volatilityImpact: riskLevel === 'high' ? 15 : riskLevel === 'medium' ? 8 : 3,
+    });
+
     set({
       teams: updatedTeams,
       allPlayers: updatedPlayers,
       freeAgents: state.freeAgents.filter(fa => fa.player.id !== freeAgentId),
-      salaryCapSpace: state.salaryCapSpace - salary,
+      salaryCapSpace: newCapSpace,
+      financials: {
+        ...state.financials,
+        currentPayroll: state.financials.currentPayroll + salary,
+      },
       newsLog: [...state.newsLog, {
         id: `news-sign-${Date.now()}`,
         week: state.currentWeek,
@@ -245,16 +397,36 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return t;
     });
 
+    // FIX: Calculate new cap space after draft
+    const userTeam = updatedTeams.find(t => t.id === state.teamId)!;
+    const newCapSpace = state.salaryCap - userTeam.totalSalary;
+
+    // Track draft pick risk
+    const riskLevel = prospect.variance > 15 ? 'high' : prospect.variance > 10 ? 'medium' : 'low';
+    get().addRiskDecision({
+      season: state.currentSeason,
+      type: 'draft',
+      description: `Drafted ${prospect.name} (${prospect.position}) - Variance: ${prospect.variance}`,
+      riskLevel,
+      outcome: 'pending',
+      volatilityImpact: prospect.variance,
+    });
+
     set({
       teams: updatedTeams,
       allPlayers: updatedPlayers,
       draftProspects: state.draftProspects.filter(p => p.id !== prospectId),
+      salaryCapSpace: newCapSpace, // FIX: Update cap space
+      financials: {
+        ...state.financials,
+        currentPayroll: userTeam.totalSalary,
+      },
       newsLog: [...state.newsLog, {
         id: `news-draft-${Date.now()}`,
         week: state.currentWeek,
         season: state.currentSeason,
         title: `${prospect.name} drafted!`,
-        body: `The ${state.teams.find(t => t.id === state.teamId)?.city} selected ${prospect.name} from ${prospect.college}.`,
+        body: `The ${state.teams.find(t => t.id === state.teamId)?.city} selected ${prospect.name} from ${prospect.college}. Rookie contract: $${newPlayer.salary}M/year.`,
         type: 'draft',
         teamIds: [state.teamId],
       }],
@@ -328,7 +500,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const userRecord = standings[state.teamId] || { wins: 0, losses: 0 };
     const userPlayoffResult = playoffs.results[state.teamId] || 'missed';
 
-    // Fan approval based on performance
+    // Fan approval based on performance (82-game scale)
     let approvalChange = 0;
     if (userRecord.wins >= 50) approvalChange = 15;
     else if (userRecord.wins >= 42) approvalChange = 5;
@@ -339,6 +511,53 @@ export const useGameStore = create<GameStore>((set, get) => ({
     else if (userPlayoffResult === 'finals') approvalChange += 15;
     else if (userPlayoffResult === 'conference_finals') approvalChange += 8;
 
+    // Calculate financials
+    const userTeam = updatedTeams.find(t => t.id === state.teamId)!;
+    const playoffRound = getPlayoffRoundFromResult(userPlayoffResult);
+    const isChampion = userPlayoffResult === 'champion';
+    const financialReport = generateFinancialReport(
+      userTeam,
+      userRecord.wins,
+      playoffRound,
+      isChampion,
+      state.financials.consecutiveTaxYears
+    );
+
+    // Calculate volatility for this season
+    const previousWins = state.seasonResults.map(s => s.wins);
+    const allWins = [...previousWins, userRecord.wins];
+    const avgWins = allWins.reduce((a, b) => a + b, 0) / allWins.length;
+    const winVariance = allWins.length > 1
+      ? allWins.reduce((sum, w) => sum + Math.pow(w - avgWins, 2), 0) / allWins.length
+      : 0;
+    const winStdDev = Math.sqrt(winVariance);
+
+    const volatilityRating: VolatilityMetrics['volatilityRating'] =
+      winStdDev < 5 ? 'stable' :
+      winStdDev < 10 ? 'moderate' :
+      winStdDev < 15 ? 'volatile' : 'extreme';
+
+    // Determine risk rating for season
+    const highRiskDecisions = state.riskDecisions.filter(d =>
+      d.season === state.currentSeason && d.riskLevel === 'high'
+    ).length;
+    const riskRating: SeasonResult['riskRating'] =
+      highRiskDecisions >= 3 ? 'aggressive' :
+      highRiskDecisions >= 1 ? 'balanced' : 'conservative';
+
+    // Update risk decision outcomes based on season results
+    const updatedRiskDecisions = state.riskDecisions.map(d => {
+      if (d.season === state.currentSeason && d.outcome === 'pending') {
+        // Determine outcome based on overall performance
+        const wasSuccessful = userRecord.wins >= 45 || userPlayoffResult !== 'missed';
+        return {
+          ...d,
+          outcome: wasSuccessful ? 'success' as const : 'neutral' as const,
+        };
+      }
+      return d;
+    });
+
     const seasonResult: SeasonResult = {
       season: state.currentSeason,
       wins: userRecord.wins,
@@ -347,7 +566,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       mvp: mvp?.name || 'Unknown',
       bestPlayer: mvp?.name || 'Unknown',
       fanApproval: Math.max(0, Math.min(100, state.fanApproval + approvalChange)),
-      revenue: 100 + userRecord.wins * 2,
+      revenue: financialReport.revenue,
+      payroll: financialReport.currentPayroll,
+      luxuryTaxPaid: financialReport.luxuryTaxOwed,
+      profit: financialReport.profit,
+      riskRating,
+      bigSwings: state.volatility.bigSwingsAttempted,
+      volatilityScore: winStdDev,
     };
 
     // Generate draft order (reverse of standings for lottery)
@@ -372,16 +597,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const newsItems: NewsItem[] = [
       {
         id: `news-season-end-${state.currentSeason}`,
-        week: 24,
+        week: 82,
         season: state.currentSeason,
         title: 'Season Complete!',
-        body: `The ${state.currentSeason} season has concluded. Your record: ${userRecord.wins}-${userRecord.losses}.`,
+        body: `The ${state.currentSeason} season has concluded. Your record: ${userRecord.wins}-${userRecord.losses}. ${state.maxSeasons - state.currentSeason > 0 ? `${state.maxSeasons - state.currentSeason} season(s) remaining.` : 'Final season complete!'}`,
         type: 'season',
         teamIds: [state.teamId],
       },
       {
         id: `news-champion-${state.currentSeason}`,
-        week: 24,
+        week: 82,
         season: state.currentSeason,
         title: `${championTeam?.city} ${championTeam?.name} win the championship!`,
         body: `Congratulations to the ${championTeam?.city} ${championTeam?.name} on their title!`,
@@ -393,12 +618,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (mvp) {
       newsItems.push({
         id: `news-mvp-${state.currentSeason}`,
-        week: 24,
+        week: 82,
         season: state.currentSeason,
         title: `${mvp.name} named MVP!`,
         body: `${mvp.name} has been named the Most Valuable Player for the season.`,
         type: 'season',
         teamIds: [mvp.teamId],
+      });
+    }
+
+    // Add financial news
+    if (financialReport.luxuryTaxOwed > 0) {
+      newsItems.push({
+        id: `news-tax-${state.currentSeason}`,
+        week: 82,
+        season: state.currentSeason,
+        title: 'Luxury Tax Bill',
+        body: `Your team paid $${financialReport.luxuryTaxOwed.toFixed(1)}M in luxury tax this season. This is the cost of aggressive spending.`,
+        type: 'general',
+        teamIds: [state.teamId],
       });
     }
 
@@ -414,6 +652,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
       draftOrder: fullDraftOrder,
       currentDraftPick: 0,
       gmExperience: state.gmExperience + 100 + userRecord.wins,
+      financials: financialReport,
+      volatility: {
+        ...state.volatility,
+        winVariance,
+        volatilityRating,
+      },
+      riskDecisions: updatedRiskDecisions,
+    });
+  },
+
+  addRiskDecision: (decision) => {
+    const state = get();
+    const newDecision: RiskDecision = {
+      ...decision,
+      id: `risk-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    };
+    set({
+      riskDecisions: [...state.riskDecisions, newDecision],
     });
   },
 
