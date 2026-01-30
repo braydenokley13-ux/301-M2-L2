@@ -155,7 +155,7 @@ export interface GameState {
   teamId: string;
   currentSeason: number;
   currentWeek: number;
-  phase: 'intro' | 'team_selection' | 'offseason_free_agency' | 'offseason_draft' | 'preseason' | 'regular_season' | 'playoffs' | 'season_end' | 'game_complete';
+  phase: 'intro' | 'team_selection' | 'onboarding' | 'offseason_free_agency' | 'offseason_draft' | 'preseason' | 'regular_season' | 'playoffs' | 'season_end' | 'game_complete' | 'season';
   strategy: StrategyType;
   salaryCap: number;
   salaryCapSpace: number;

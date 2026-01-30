@@ -141,7 +141,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       allPlayers: players,
       freeAgents,
       draftProspects,
-      phase: 'preseason',
+      phase: 'onboarding',
       salaryCap: SALARY_CAP,
       salaryCapSpace: SALARY_CAP - userTeam.totalSalary,
       fanApproval: userTeam.fanbase,
