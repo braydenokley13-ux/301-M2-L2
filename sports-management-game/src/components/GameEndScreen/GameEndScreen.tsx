@@ -1,16 +1,8 @@
 import React, { useMemo } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { TEAM_CONTEXTS } from '../../game/teamContext';
+import { TEAM_CONTEXTS, CONTEXT_RISK_EXPECTATIONS } from '../../game/teamContext';
 
 // Risk level expectations by context
-const CONTEXT_RISK_EXPECTATIONS: Record<string, 'high' | 'medium' | 'low'> = {
-  small_market_reset: 'high',
-  cash_rich_expansion: 'high',
-  legacy_power: 'medium',
-  star_dependent: 'medium',
-  revenue_sensitive: 'low',
-};
-
 const GameEndScreen: React.FC = () => {
   const { seasonResults, riskDecisions, getUserTeam } = useGameStore();
   const team = getUserTeam();
@@ -89,7 +81,9 @@ const GameEndScreen: React.FC = () => {
     performanceScore += championships * 35;
     performanceScore += playoffAppearances * 12;
     performanceScore += Math.min(30, avgWins / 2);
-    performanceScore = Math.min(100, performanceScore);
+    // avgWins is a mean, so this carries a fraction. The score bars render the
+    // number directly, which put "43.666666666666664" on the results screen.
+    performanceScore = Math.round(Math.min(100, performanceScore));
 
     // === FINAL SCORE ===
     const finalScore = Math.round(

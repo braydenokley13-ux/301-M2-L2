@@ -90,14 +90,16 @@ export const STRATEGIES: Record<StrategyType, Strategy> = {
 };
 
 export function getContextCompatibility(context: TeamContextType, strategy: StrategyType): number {
-  const compatibility: Record<TeamContextType, Record<StrategyType, number>> = {
-    legacy_power: { stability_first: 0.5, aggressive_push: 0.9, boom_bust_swing: 0.7 },
-    small_market_reset: { stability_first: 0.9, aggressive_push: 0.5, boom_bust_swing: 0.3 },
-    revenue_sensitive: { stability_first: 0.8, aggressive_push: 0.5, boom_bust_swing: 0.2 },
-    cash_rich_expansion: { stability_first: 0.6, aggressive_push: 0.8, boom_bust_swing: 0.6 },
-    star_dependent: { stability_first: 0.4, aggressive_push: 0.8, boom_bust_swing: 0.9 },
+  // Derived from CONTEXT_RISK_EXPECTATIONS so this can never drift away from
+  // what the end screen actually scores. The previous hand-written table had
+  // small_market_reset rating boom_bust_swing 0.3 — its worst option — for the
+  // one context the game tells you to swing with.
+  const byBand: Record<RiskBand, Record<StrategyType, number>> = {
+    high:   { stability_first: 0.3, aggressive_push: 0.7, boom_bust_swing: 0.9 },
+    medium: { stability_first: 0.6, aggressive_push: 0.9, boom_bust_swing: 0.6 },
+    low:    { stability_first: 0.9, aggressive_push: 0.5, boom_bust_swing: 0.2 },
   };
-  return compatibility[context][strategy];
+  return byBand[CONTEXT_RISK_EXPECTATIONS[context]][strategy];
 }
 
 export function getDifficultyRating(context: TeamContextType): number {
@@ -109,4 +111,50 @@ export function getDifficultyRating(context: TeamContextType): number {
     star_dependent: 3,
   };
   return difficulty[context];
+}
+
+/* ---------------------------------------------------------------------------
+ * What risk level is CORRECT for each context.
+ *
+ * This is the lesson the whole simulation exists to teach, so it lives in one
+ * place and every screen reads it from here. It used to be duplicated: the end
+ * screen scored against a private copy, the onboarding narrated a second copy,
+ * and the dashboard tried to re-derive it from `ownershipRiskTolerance` — a
+ * different quantity on a different scale. The dashboard lost that bet and told
+ * every team to play it safe, including the two the scoring rewards for
+ * swinging, which is a 32-point swing on a 100-point score.
+ *
+ * Note this is deliberately NOT ownershipRiskTolerance. That is how much
+ * variance the OWNER will absorb. This is what the SITUATION calls for, and the
+ * two come apart on purpose — a small-market rebuild has a cautious owner and
+ * every reason to take big swings, which is the point of rational aggression.
+ * ------------------------------------------------------------------------- */
+export type RiskBand = 'high' | 'medium' | 'low';
+
+export const CONTEXT_RISK_EXPECTATIONS: Record<TeamContextType, RiskBand> = {
+  small_market_reset: 'high',
+  cash_rich_expansion: 'high',
+  legacy_power: 'medium',
+  star_dependent: 'medium',
+  revenue_sensitive: 'low',
+};
+
+export function getRiskExpectation(context: TeamContextType): RiskBand {
+  return CONTEXT_RISK_EXPECTATIONS[context];
+}
+
+/** Short badge text. Same words wherever the band is shown. */
+export function riskBandLabel(band: RiskBand): string {
+  return band === 'high' ? 'SHOULD Take Big Risks'
+    : band === 'medium' ? 'CAN Take Calculated Risks'
+    : 'AVOID High-Risk Plays';
+}
+
+/** The sentence the dashboard shows while decisions are still being made. */
+export function riskBandCoaching(band: RiskBand): string {
+  return band === 'high'
+    ? 'Your team SHOULD take big risks. Are you being aggressive enough?'
+    : band === 'medium'
+    ? 'Moderate risk is appropriate. Balance aggression with stability.'
+    : 'Your team should AVOID high risk. Playing it safe is the smart move.';
 }

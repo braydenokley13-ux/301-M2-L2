@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { TEAM_CONTEXTS, STRATEGIES } from '../../game/teamContext';
+import { TEAM_CONTEXTS, STRATEGIES, getRiskExpectation, riskBandCoaching } from '../../game/teamContext';
 import { SALARY_CAP, LUXURY_TAX_THRESHOLD, SALARY_FLOOR, calculateLuxuryTax } from '../../game/economics';
 import PlayerCard from '../common/PlayerCard';
 
@@ -16,6 +16,9 @@ const Dashboard: React.FC = () => {
   if (!team) return null;
 
   const context = TEAM_CONTEXTS[team.contextType];
+  // The same value the end screen scores against, so the coaching shown while
+  // decisions are being made cannot contradict the grade given for making them.
+  const expectedRisk = getRiskExpectation(team.contextType);
   const strat = STRATEGIES[strategy];
   const { eastern, western } = getStandings();
   const conferenceStandings = team.conference === 'Eastern' ? eastern : western;
@@ -78,9 +81,9 @@ const Dashboard: React.FC = () => {
           <div className="bg-arena-dark rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className={`w-3 h-3 rounded-full ${
-                context.ownershipRiskTolerance >= 7
+                expectedRisk === 'high'
                   ? (volatility.volatilityRating === 'volatile' || volatility.volatilityRating === 'extreme' ? 'bg-green-500' : 'bg-yellow-500')
-                  : context.ownershipRiskTolerance >= 4
+                  : expectedRisk === 'medium'
                   ? (volatility.volatilityRating === 'moderate' ? 'bg-green-500' : 'bg-yellow-500')
                   : (volatility.volatilityRating === 'stable' ? 'bg-green-500' : 'bg-red-500')
               }`} />
@@ -88,11 +91,7 @@ const Dashboard: React.FC = () => {
               <span className="text-xs text-basketball-orange ml-auto">40% of score</span>
             </div>
             <p className="text-xs text-gray-400">
-              {context.ownershipRiskTolerance >= 7
-                ? 'Your team SHOULD take big risks. Are you being aggressive enough?'
-                : context.ownershipRiskTolerance >= 4
-                ? 'Moderate risk is appropriate. Balance aggression with stability.'
-                : 'Your team should AVOID high risk. Playing it safe is the smart move.'}
+              {riskBandCoaching(expectedRisk)}
             </p>
           </div>
 
@@ -321,7 +320,7 @@ const Dashboard: React.FC = () => {
                   <span className="text-gray-400">Risk Tolerance</span>
                   <div className="flex mt-1">
                     {[...Array(5)].map((_, i) => (
-                      <div key={i} className={`w-2 h-2 rounded-full mr-1 ${i < Math.ceil(context.ownershipRiskTolerance / 2) ? 'bg-orange-400' : 'bg-gray-600'}`} />
+                      <div key={i} className={`w-2 h-2 rounded-full mr-1 ${i < Math.round(context.ownershipRiskTolerance * 5) ? 'bg-orange-400' : 'bg-gray-600'}`} />
                     ))}
                   </div>
                 </div>

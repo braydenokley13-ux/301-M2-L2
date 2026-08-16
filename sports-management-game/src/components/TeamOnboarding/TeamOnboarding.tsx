@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { TEAM_CONTEXTS } from '../../game/teamContext';
+import { TEAM_CONTEXTS , getRiskExpectation, riskBandLabel, RiskBand } from '../../game/teamContext';
 
 // Brayden White's photo - place in public/images/brayden-white.jpg
 const TUTOR_PHOTO = '/301-M2-L2/images/brayden-white.jpg';
@@ -118,6 +118,9 @@ const TeamOnboarding: React.FC = () => {
 
   const context = TEAM_CONTEXTS[team.contextType];
   const guidance = TEAM_GUIDANCE[team.contextType];
+  // The narrative copy stays local; the BAND comes from the one place the end
+  // screen also reads, so the badge here cannot promise what the grade denies.
+  const riskProfile = getRiskExpectation(team.contextType);
 
   const tutorialSteps = [
     {
@@ -126,7 +129,7 @@ const TeamOnboarding: React.FC = () => {
     },
     {
       title: "Understanding Your Risk Profile",
-      content: `Based on your team's situation, your recommended risk profile is: ${guidance.riskProfile.toUpperCase()}. ${guidance.keyMessage}`,
+      content: `Based on your team's situation, your recommended risk profile is: ${riskProfile.toUpperCase()}. ${guidance.keyMessage}`,
     },
     {
       title: "Your Mission",
@@ -167,14 +170,7 @@ const TeamOnboarding: React.FC = () => {
     }
   };
 
-  const getRiskLabel = (risk: string) => {
-    switch (risk) {
-      case 'high': return 'SHOULD Take Big Risks';
-      case 'medium': return 'CAN Take Calculated Risks';
-      case 'low': return 'AVOID High-Risk Plays';
-      default: return 'Unknown';
-    }
-  };
+  const getRiskLabel = (risk: string) => riskBandLabel(risk as RiskBand);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-arena-dark to-black flex items-center justify-center p-4">
@@ -189,8 +185,8 @@ const TeamOnboarding: React.FC = () => {
           </div>
           <h1 className="text-3xl font-bold text-white">{team.city} {team.name}</h1>
           <p className="text-gray-400">{context.label}</p>
-          <div className={`inline-block mt-2 px-4 py-1 rounded-full border ${getRiskBadgeColor(guidance.riskProfile)}`}>
-            {getRiskLabel(guidance.riskProfile)}
+          <div className={`inline-block mt-2 px-4 py-1 rounded-full border ${getRiskBadgeColor(riskProfile)}`}>
+            {getRiskLabel(riskProfile)}
           </div>
         </div>
 
